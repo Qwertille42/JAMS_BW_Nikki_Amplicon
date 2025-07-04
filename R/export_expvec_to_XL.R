@@ -18,9 +18,11 @@
 
 #' @param returncounts Requires a logical value. If TRUE, will print the information to be exported to Excel onto the terminal (which can be directed into a variable). If the analysis is taxonomical, this information will include metadata (if desired), the relative abundance of each feature for each taxonomic feature in Parts Per Million(PPM) for each of the samples, the Genome Completeness for each taxonomic feature in each of the samples, the Percentage from Contigs for each taxonomic feature in each of the samples, and a featuretable containing the feature rownames and any associated taxonomic information. If the analysis is functional, this will include metadata (if desired), the relative abundance of each functional feature in the analysis in Parts Per Million(PPM) for each of the samples, the Genecounts consisting of the number of features annotated in the analysis, and a featuretable containing the feature rownames, an accession, and any addtional information on the feature. If FALSE (the default), the information described above will be exported to Excel only.
 
+#' @param bothPPMandNumBases Requires a logical value. If TRUE, will export both PPM and counts. If FALSE, will only export either PPM (Default) or the raw number of bases. 
+
 #' @export
 
-export_expvec_to_XL <- function(expvec = NULL, usefulexp = NULL, filename = NULL, featcutoff = NULL, GenomeCompletenessCutoff = NULL, applyfilters = NULL, asPPM = TRUE, PPM_normalize_to_bases_sequenced = FALSE, includemetadata = TRUE, returncounts = FALSE,...){
+export_expvec_to_XL <- function(expvec = NULL, usefulexp = NULL, filename = NULL, featcutoff = NULL, GenomeCompletenessCutoff = NULL, applyfilters = NULL, asPPM = TRUE, PPM_normalize_to_bases_sequenced = FALSE, includemetadata = TRUE, returncounts = FALSE, bothPPMandNumBases=FALSE, ...){
 
    #Hardwire PctFromCtgscutoff, as this should never be used without filtering because of huge amounts of false positives when evaluating taxonomic information from unassembled reads. The use of classifying unassembled reads is deprecated in JAMS and the default is to NOT classify unassembled reads, so this is usually not an issue.
    PctFromCtgscutoff <- c(70, 50)
@@ -55,54 +57,132 @@ export_expvec_to_XL <- function(expvec = NULL, usefulexp = NULL, filename = NULL
         cvn <- cvn + 1
     }
 
-    if (any(c((asPPM == TRUE), !is.null(applyfilters), !is.null(featcutoff), !is.null(GenomeCompletenessCutoff)))){
-        flog.info("Counts will be exported as PPM")
-        countunits <- "PPM"
-    } else {
-        flog.info("Counts will be exported as raw number of bases")
-        countunits <- "NumBases"
+    ##If you want both PPM and counts, ignore other arguments
+
+    if(bothPPMandNumBases == TRUE){
+        flog.info("Counts will be exported as both raw number of bases and PPM")
+        countunits <- c("NumBases","PPM")
+    }else{
+        if (any(c((asPPM == TRUE), !is.null(applyfilters), !is.null(featcutoff), !is.null(GenomeCompletenessCutoff)))){
+            flog.info("Counts will be exported as PPM")
+            countunits <- "PPM"
+        } else {
+            flog.info("Counts will be exported as raw number of bases")
+            countunits <- "NumBases"
+        }
     }
 
     #Get counts
-    for (x in 1:length(expvec2)){
+    for (x in 1:length(expvec2)) {
         analysis <- metadata(expvec2[[x]])$analysis
         flog.info(paste("Exporting", analysis))
 
-        presetlist <- declare_filtering_presets(analysis = analysis, applyfilters = applyfilters, featcutoff = featcutoff, GenomeCompletenessCutoff = GenomeCompletenessCutoff, PctFromCtgscutoff = PctFromCtgscutoff)
+        presetlist <- declare_filtering_presets(
+            analysis = analysis,
+            applyfilters = applyfilters,
+            featcutoff = featcutoff,
+            GenomeCompletenessCutoff = GenomeCompletenessCutoff,
+            PctFromCtgscutoff = PctFromCtgscutoff
+        )
 
-        exp_filt <- filter_experiment(ExpObj = expvec2[[x]], featcutoff = presetlist$featcutoff, asPPM = asPPM, PPM_normalize_to_bases_sequenced = PPM_normalize_to_bases_sequenced, GenomeCompletenessCutoff = presetlist$GenomeCompletenessCutoff, PctFromCtgscutoff = presetlist$PctFromCtgscutoff)
+        if (length(countunits) == 2) {
+            for (units in countunits) {
+            if (units == "NumBases") {
+                exp_filt <- filter_experiment(
+                ExpObj = expvec2[[x]],
+                featcutoff = presetlist$featcutoff,
+                asPPM = FALSE,
+                PPM_normalize_to_bases_sequenced = PPM_normalize_to_bases_sequenced,
+                GenomeCompletenessCutoff = presetlist$GenomeCompletenessCutoff,
+                PctFromCtgscutoff = presetlist$PctFromCtgscutoff
+                )
+            } else if (units == "PPM") {
+                exp_filt <- filter_experiment(
+                ExpObj = expvec2[[x]],
+                featcutoff = presetlist$featcutoff,
+                asPPM = TRUE,
+                PPM_normalize_to_bases_sequenced = PPM_normalize_to_bases_sequenced,
+                GenomeCompletenessCutoff = presetlist$GenomeCompletenessCutoff,
+                PctFromCtgscutoff = presetlist$PctFromCtgscutoff
+                )
+            }
+                cts <- assays(exp_filt)$BaseCounts
+                ctsname <- paste(names(expvec2)[x], units, sep = "_")
+                countvec[[cvn]] <- as.data.frame(cts)
+                names(countvec)[cvn] <- ctsname
+                cvn <- cvn + 1
 
-        cts <- assays(exp_filt)$BaseCounts
-        ctsname <- paste(names(expvec2)[x], countunits, sep="_")
-        countvec[[cvn]] <- as.data.frame(cts)
-        names(countvec)[cvn] <- ctsname
-        cvn <- cvn + 1
+                if ("GenomeCompleteness" %in% names(assays(expvec2[[x]]))) {
+                    cts <- assays(exp_filt)$GenomeCompleteness
+                    ctsname <- paste(names(expvec2)[x], "GnmCompl", sep = "_")
+                    countvec[[cvn]] <- as.data.frame(cts)
+                    names(countvec)[cvn] <- ctsname
+                    cvn <- cvn + 1
+                }
 
-        if ("GenomeCompleteness" %in% names(assays((expvec2)[[x]]))){
-            cts <- assays(exp_filt)$GenomeCompleteness
-            ctsname <- paste(names(expvec2)[x], "GnmCompl", sep="_")
+                if ("PctFromCtgs" %in% names(assays(expvec2[[x]]))) {
+                    cts <- assays(exp_filt)$PctFromCtgs
+                    ctsname <- paste(names(expvec2)[x], "PctFromCtgs", sep = "_")
+                    countvec[[cvn]] <- as.data.frame(cts)
+                    names(countvec)[cvn] <- ctsname
+                    cvn <- cvn + 1
+                }
+
+                if ("GeneCounts" %in% names(assays(expvec2[[x]]))) {
+                    cts <- assays(exp_filt)$GeneCounts
+                    ctsname <- paste(names(expvec2)[x], "GeneCounts", sep = "_")
+                    countvec[[cvn]] <- as.data.frame(cts)
+                    names(countvec)[cvn] <- ctsname
+                    cvn <- cvn + 1
+                }
+            }
+        } else {
+            exp_filt <- filter_experiment(
+                ExpObj = expvec2[[x]],
+                featcutoff = presetlist$featcutoff,
+                asPPM = asPPM,
+                PPM_normalize_to_bases_sequenced = PPM_normalize_to_bases_sequenced,
+                GenomeCompletenessCutoff = presetlist$GenomeCompletenessCutoff,
+                PctFromCtgscutoff = presetlist$PctFromCtgscutoff
+            )
+
+            cts <- assays(exp_filt)$BaseCounts
+            ctsname <- paste(names(expvec2)[x], countunits, sep = "_")
             countvec[[cvn]] <- as.data.frame(cts)
             names(countvec)[cvn] <- ctsname
             cvn <- cvn + 1
-        }
 
-        if ("PctFromCtgs" %in% names(assays((expvec2)[[x]]))){
-            cts <- assays(exp_filt)$PctFromCtgs
-            ctsname <- paste(names(expvec2)[x], "PctFromCtgs", sep="_")
-            countvec[[cvn]] <- as.data.frame(cts)
-            names(countvec)[cvn] <- ctsname
-            cvn <- cvn + 1
-        }
+            if ("GenomeCompleteness" %in% names(assays(expvec2[[x]]))) {
+                cts <- assays(exp_filt)$GenomeCompleteness
+                ctsname <- paste(names(expvec2)[x], "GnmCompl", sep = "_")
+                countvec[[cvn]] <- as.data.frame(cts)
+                names(countvec)[cvn] <- ctsname
+                cvn <- cvn + 1
+            }
 
-        if ("GeneCounts" %in% names(assays((expvec2)[[x]]))){
-            cts <- assays(exp_filt)$GeneCounts
-            ctsname <- paste(names(expvec2)[x], "GeneCounts", sep="_")
-            countvec[[cvn]] <- as.data.frame(cts)
-            names(countvec)[cvn] <- ctsname
-            cvn <- cvn + 1
-        }
+            if ("PctFromCtgs" %in% names(assays(expvec2[[x]]))) {
+                cts <- assays(exp_filt)$PctFromCtgs
+                ctsname <- paste(names(expvec2)[x], "PctFromCtgs", sep = "_")
+                countvec[[cvn]] <- as.data.frame(cts)
+                names(countvec)[cvn] <- ctsname
+                cvn <- cvn + 1
+            }
 
+            if ("GeneCounts" %in% names(assays(expvec2[[x]]))) {
+                cts <- assays(exp_filt)$GeneCounts
+                ctsname <- paste(names(expvec2)[x], "GeneCounts", sep = "_")
+                countvec[[cvn]] <- as.data.frame(cts)
+                names(countvec)[cvn] <- ctsname
+                cvn <- cvn + 1
+            }
+        }
+        #If the asv data exists, it will be exported in the excel 
+
+        # Join by LKT
         feattbl <- as.data.frame(rowData(expvec2[[x]]))
+          if ("asv2lkt" %in% names(metadata((expvec2)[[x]])) & "LKT" %in% names(rowData(expvec2[[x]]))){
+            feattbl <- left_join( feattbl, (metadata(expvec2[[x]])$asv2lkt), by = "LKT")
+          }
         ftsname <- paste(names(expvec2)[x], "featuretable", sep="_")
         countvec[[cvn]] <- feattbl
         names(countvec)[cvn] <- ftsname
@@ -118,9 +198,11 @@ export_expvec_to_XL <- function(expvec = NULL, usefulexp = NULL, filename = NULL
         names(countvec) <- newnames
     }
 
+
     flog.info(paste("Saving spreadsheet as", filename))
     write.xlsx(countvec, file = filename, asTable = TRUE, rowNames = TRUE, colNames = TRUE, borders = "all", colWidths = "auto")
     if (returncounts){
         return(countvec)
     }
 }
+
