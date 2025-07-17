@@ -83,6 +83,11 @@ agglomerate_features <- function(ExpObj = NULL, glomby = NULL){
     assays <- assays[sapply(1:length(assays), function (x) { !is.null(assays[[x]]) })]
     names(assays) <- c("BaseCounts", "GenomeCompleteness")[1:length(assays)]
 
+    # Ensure rownames of assays and rowData are identical
+    for (i in seq_along(assays)) {
+        rownames(assays[[i]]) <- rownames(glom_ftt)
+    }
+
     glomExpObj <- SummarizedExperiment(assays = assays, rowData = glom_ftt, colData = pheno_original)
     metadata(glomExpObj) <- metadata(ExpObj)
 
