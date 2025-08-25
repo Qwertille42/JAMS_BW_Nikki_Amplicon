@@ -33,11 +33,12 @@ defopt$classignore <- "N_A"
 defopt$maxnumclasses <- 15
 defopt$taxamethod <- "dada2"
 defopt$readcountthres <- 500
-defopt$trunclen <- "240,200"
+defopt$trunclen <- "nothing"
 defopt$exporttables <- FALSE
 defopt$plot_read_qualities <- TRUE
 defopt$primerforw <- NULL
 defopt$primerrev <- NULL
+defopt$makexl <- FALSE
 #defopt$threads <- (as.numeric(detectHardwareResources()["threads"]))
 #defopt$threads <- detectBatchCPUs()
 
@@ -90,7 +91,7 @@ option_list <- list(
     make_option(c("-T", "--trunclen_cutoffs_R1_R2"),
                 action="store", default = defopt$trunclen,
                 type="character",
-                help ="Specify truncation lengths for R1,R2 (example: -T 240,200). If not specified, JAMSAmplicon will impute appropriate values for truncation with fastq quality analysis."),
+                help ="Specify truncation lengths for R1,R2 (example: -T 240,200).Trunctation length will automatically be calculated but if you want to manually snip, go for it"),
 
     make_option(c("-a", "--taxonomy_database"),
                 action="store", default = NULL,
@@ -110,35 +111,10 @@ option_list <- list(
                 type="logical",
                 help ="Export relative abundance tables and feature data tables in tsv format."),
 
-#    make_option(c("-d", "--make_ordination_reports"),
-#                action="store", default = NULL,
-#                type="character",
-#                help ="Generate ordination plots with this algorithm. Choose between PCA, tSNE or tUMAP, or more than one separated by a comma. Example: -d PCA,tUMAP"),
-
-#    make_option(c("-f", "--make_exploratory_reports"),
-#                action="store_true", default = FALSE,
-#                type="logical",
-#                help ="Generate Relative Abundace heatmaps and spreadsheets based on variance analysis."),
-
-#    make_option(c("-k", "--make_comparative_reports"),
-#                action="store_true", default = FALSE,
-#                type="logical",
-#                help ="Generate Relative Abundace heatmaps and spreadsheets for hypothesis testing using metadata categories."),
-
-#    make_option(c("-r", "--make_correlation_reports"),
-#                 action="store_true", default = FALSE,
-#                type="logical",
-#                help ="Generate Pairwise Feature Correlation heatmaps."),
-
-#    make_option(c("-z", "--make_alpha_reports"),
-#                action = "store_true", default = FALSE,
-#                type = "logical",
-#                help = "Generate alpha diversity plots."),
-#
-#    make_option(c("-m", "--plot_in_parallel"),
-#                action = "store_true", default = FALSE,
-#                type = "logical",
-#                help = "Use multiple CPUs when generating plots. This option is experimental, and is not guaranteed to not crash."),
+   make_option(c("-d", "--make_XLsheet"),
+                action="store_true", default = defopt$makexl,
+                type="logical",
+                help ="Generate XL sheets with results. Will export both ASV and Family level results."),
 
     make_option(c("-s", "--run_script"),
                 action="store", default = NULL,
@@ -208,7 +184,7 @@ if (!is.null(opt$run_script)){
     #Check that file exists
     if (!file.exists(opt$run_script)){
         flog.info(paste("Unable to find file", opt$run_script))
-        q()
+        quit(save = "no")
     }
 }
 
@@ -216,7 +192,7 @@ if (!is.null(opt$run_script)){
 if (!(opt$taxamethod %in% c("dada2", "IDtaxa", "IDtaxapr2","dada2pr2"))){
     print("For an analysis chooose between one of these three options: dada2, IDtaxa, dada2pr2 or IDtaxapr2.")
     print_help(OptionParser(option_list = option_list))
-    q()
+    quit(save = "no")
 }
 
 # Determine output directory
@@ -334,14 +310,6 @@ if(is.null(opt$forward_primer) && !is.null(opt$reverse_primer)){
     stop("You have given a reverse primer but no forward primer. Please check your input options.")
 }
 
-if(!is.null(opt$trunclen_cutoffs_R1_R2) && !is.null(opt$reverse_primer)){
-    flog.info("You gave both truncation lengths and primers to trim. Trimming primers and ignoring the truncation parameter given as this is redudant.")
-}
-
-
-
-
-
 #Save in case anything else goes wrong later
 IO_jams_workspace_image(opt = opt, operation = "save", verbose = FALSE)
 
@@ -394,7 +362,7 @@ IO_jams_workspace_image(opt = opt, operation = "save", verbose = FALSE)
 #Check each sample has two files
 if (length(Samples_have_R1R2) != (nrow(rawfastqsdf) / 2)){
     flog.warn("Some samples have more than two fastq files. Check your metadata and fastq file path! Aborting now.")
-    q()
+    quit(save = "no")
 }
 IO_jams_workspace_image(opt = opt, operation = "save", verbose = FALSE)
 
@@ -436,9 +404,11 @@ allOrients <- function(primer) {
     primerpresence <- rbind(FWD.ForwardReads = sapply(FWD.orients, primerHits, fn = rawfastqsdfR1$NFilteredFilePaths[[1]]), FWD.ReverseReads = sapply(FWD.orients, primerHits, fn = rawfastqsdfR2$NFilteredFilePaths[[1]]), REV.ForwardReads = sapply(REV.orients, primerHits, fn = rawfastqsdfR1$NFilteredFilePaths[[1]]), REV.ReverseReads = sapply(REV.orients, primerHits, fn= rawfastqsdfR2$NFilteredFilePaths[[1]]))
     primerpresence <-  as.data.frame(primerpresence)
 IO_jams_workspace_image(opt = opt, operation = "save", verbose = FALSE)
+    
     #Running cutadapt
     system2("cutadapt", args = "--version")
     cutoutdir <- file.path(opt$outdir, "cutadapt")
+
 
     if(!dir.exists(cutoutdir)) dir.create(cutoutdir)
     fastqF1cut <- file.path(cutoutdir, basename(rawfastqsdfR1$NFilteredFilePaths))
@@ -472,22 +442,79 @@ rbind(FWD.ForwardReads = sapply(FWD.orients , primerHits, fn = fastqF1cut[[1]]),
     primerHits, fn = fastqF2cut[[1]]), REV.ForwardReads = sapply(REV.orients, primerHits,
     fn = fastqF1cut[[1]]), REV.ReverseReads = sapply(REV.orients, primerHits, fn = fastqF2cut[[1]]))
 
+    #Update rawfastqsdf with the new file paths so cutadapt reads are the reads we use 
+rawfastqsdf$Filepaths <- c(rbind(fastqF1cut, fastqF2cut))
+    rawfastqsdfR1$Filepaths <- fastqF1cut
+    rawfastqsdfR2$Filepaths <- fastqF2cut
+
 flog.info("Have Completed Removing Primers is complete")
-} else {
-    flog.info("Will truncate the reads to specified lengths")
+} 
+###Getting Truncation Lengths
+flog.info("Getting truncation lengths")
+
+##Seeing if there are inputted truncation lengths first.... 
+if( opt$trunclen_cutoffs_R1_R2 != "nothing"){
     # Parse and validate truncation lengths only once
-    trunclen_cutoffs_R1_R2 <- as.numeric(unlist(strsplit(opt$trunclen_cutoffs_R1_R2, split = ",")))
+    trunclen_cutoffs_R1_R2 <- as.numeric(sapply(strsplit(opt$trunclen_cutoffs_R1_R2, split = ",")[[1]], trimws))
     if (length(trunclen_cutoffs_R1_R2) != 2 || any(is.na(trunclen_cutoffs_R1_R2))) {
         stop("Invalid format for truncation lengths. Please specify two comma-separated numeric values, e.g., '240,200'.")
     }
-    flog.info(paste("For R1 reads truncation length will be", trunclen_cutoffs_R1_R2[1], "as specified by the user"))
-    flog.info(paste("For R2 reads truncation length will be", trunclen_cutoffs_R1_R2[2], "as specified by the user"))
+    flog.info(paste("For R1 reads truncation length will be", trunclen_cutoffs_R1_R2[1], "(user-specified)"))
+    flog.info(paste("For R2 reads truncation length will be", trunclen_cutoffs_R1_R2[2], "(", if(opt$trunclen_cutoffs_R1_R2 != "nothing") "user-specified" else "calculated from read lengths", ")"))
+
+    ##If nothing is there... then let's calculate the truncation lengths from the read lengths
+}else{
+    flog.info("No truncation lengths specified, calculating from read lengths.")
+
+
+
+# Function to get length stats for one FASTQ (using first N reads for speed)
+
+##getting the lengths of our reads 
+
+
+fq <- readFastq(rawfastqsdfR1$Filepaths[1])
+width(fq) |> summary()
+
+get_read_lengths <- function(filepath) {
+  fq <- readFastq(filepath)
+  return(summary(width(fq)))
 }
 
-#Flag samples which will not pass quality control
-#flagR1_Samples <- rownames(subset(rawfastqsdf, Read == "R1"))[which(subset(rawfastqsdf, Read == "R1")[ , paste0("Q", phredcutoff)] <  trunclen_cutoffs_R1_R2[1])]
-#flagR2_Samples <- rownames(subset(rawfastqsdf, Read == "R2"))[which(subset(rawfastqsdf, Read == "R2")[ , paste0("Q", phredcutoff)] <  trunclen_cutoffs_R1_R2[2])]
+# apply in parallel
+length_stats_R1 <- mclapply(
+  rawfastqsdfR1$Filepaths,
+  get_read_lengths,
+  mc.cores = max((opt$threads - 2), 1)
+)
 
+length_stats_R2 <- mclapply(
+  rawfastqsdfR2$Filepaths,
+  get_read_lengths,
+  mc.cores = max((opt$threads - 2), 1)
+)
+# Use the smaller of median/mean, rounded down.
+extract_median_mean <- function(stats_list) {
+  medians <- sapply(stats_list, function(x) x["Median"])
+  means   <- sapply(stats_list, function(x) x["Mean"])
+  c(median = min(medians), mean = min(means))  # pick min across files
+}
+
+# apply to R1 and R2
+vals_R1 <- extract_median_mean(length_stats_R1)
+vals_R2 <- extract_median_mean(length_stats_R2)
+
+# make cutoff vector
+trunclen_cutoffs_R1_R2 <- c(
+  floor(min(vals_R1["median"], vals_R1["mean"])),
+  floor(min(vals_R2["median"], vals_R2["mean"]))
+)
+
+trunclen_cutoffs_R1_R2
+    flog.info(paste("For R1 reads truncation length will be", trunclen_cutoffs_R1_R2[1], "as calculated from read lengths"))
+    flog.info(paste("For R2 reads truncation length will be", trunclen_cutoffs_R1_R2[2], "as calculated from read lengths"))
+}
+#Save the truncation lengths in the opt
 IO_jams_workspace_image(opt = opt, operation = "save", verbose = FALSE)
 
 ##########################
@@ -517,11 +544,9 @@ rownames(rawfastqsdfR2) <- rawfastqsdfR2$OriPrefix
 rawfastqsdfR2 <- rawfastqsdfR2[rownames(rawfastqsdfR1) , ]
 
 flog.info("Filtering and trimming reads")
-if(!is.null(opt$forward_primer) && !is.null(opt$reverse_primer)){
-out <- filterAndTrim(fwd = rawfastqsdfR1$Filepaths, filt = rawfastqsdfR1$FilteredFilePaths, rev = rawfastqsdfR2$Filepaths, filt.rev = rawfastqsdfR2$FilteredFilePaths, compress = TRUE, truncQ = 2, maxN = 0, maxEE = c(2,2), rm.phix = TRUE, n = 1e+05, OMP = FALSE, verbose = TRUE, multithread = max((opt$threads - 2), 1))
-}else{
+
+
 out <- filterAndTrim(fwd = rawfastqsdfR1$Filepaths, filt = rawfastqsdfR1$FilteredFilePaths, rev = rawfastqsdfR2$Filepaths, filt.rev = rawfastqsdfR2$FilteredFilePaths, truncLen = trunclen_cutoffs_R1_R2, compress = TRUE, truncQ = 2, maxN = 0, maxEE = c(2,2), rm.phix = TRUE, n = 1e+05, OMP = FALSE, verbose = TRUE, multithread = max((opt$threads - 2), 1))
-}
 
 #Adjust out dataframe
 out <- as.data.frame(out)
@@ -548,14 +573,13 @@ Samples_passing_threshold <- intersect(rawfastqsdfR1$OriPrefix, rawfastqsdfR2$Or
 Sample2Depth <- out[ , c("OriPrefix", "Number_Reads_Output")]
 colnames(Sample2Depth)[1] <- "Sample"
 
-rm(out)
+#rm(out)
 
 filtFs <- rawfastqsdfR1$FilteredFilePaths
 filtRs <- rawfastqsdfR2$FilteredFilePaths
 
 sample.names <- rawfastqsdfR1$OriPrefix
 IO_jams_workspace_image(opt = opt, operation = "save", verbose = FALSE)
-
 
 flog.info("Learning errors")
 errF <- learnErrors(filtFs, multithread = max((opt$threads - 2), 1))
@@ -754,6 +778,7 @@ if(opt$taxamethod %in% c("IDtaxapr2")){
 }
 
 opt$tt$Species <- opt$tt$LKT
+# Ensure LKT identifiers are unique to avoid duplicate row names in downstream analysis
 opt$tt$LKT <- make.unique(opt$tt$LKT)
 
 #Get counts table
@@ -791,7 +816,7 @@ IO_jams_workspace_image(opt = opt, operation = "save", verbose = TRUE)
 #Stop here and save if nothing else is required (if one sample only)
 if (length(sample.names) == 1){
 flog.info("Thank you for using JAMSAmplicon for your analysis")
-    q()
+    quit(save = "no")
 }
 ##Otherwise build an expvec
 expvec <- list()
@@ -811,9 +836,16 @@ gc()
 IO_jams_workspace_image(opt = opt, operation = "save", verbose = TRUE)
 
 #Stop here and save if nothing else is required.
-if (!any(c((!is.null(opt$make_ordination_reports)), (!is.null(opt$run_script)), opt$make_exploratory_reports, opt$make_comparative_reports, opt$make_PA_reports, opt$make_correlation_reports, opt$make_alpha_reports))){
+if ((isFALSE(opt$make_XLsheet))){
     flog.info("Thank you for using JAMSAmplicon")
-    q()
-}
+    quit()
+}else{
+export_expvec_to_XL(expvec = expvec, usefulexp = "LKT", filename = paste0(project, "ASVs_allASVs_ordered.xlsx"), featcutoff = NULL, GenomeCompletenessCutoff = NULL, applyfilters = NULL, asPPM = FALSE, PPM_normalize_to_bases_sequenced = FALSE, includemetadata = TRUE, returncounts = FALSE, bothPPMandNumBases=TRUE)
 
-q()
+expvec$famlvl <- agglomerate_features(ExpObj = expvec$LKT, glomby = "Family")
+export_expvec_to_XL(expvec = expvec, usefulexp = "famlvl", filename = paste0(project, "_familylvl_all_Fams.xlsx"), featcutoff = NULL, GenomeCompletenessCutoff = NULL, applyfilters = NULL, asPPM = FALSE, PPM_normalize_to_bases_sequenced = FALSE, includemetadata = TRUE, returncounts = FALSE, bothPPMandNumBases=TRUE)
+    flog.info("Thank you for using JAMSAmplicon")
+
+}
+quit()
+
